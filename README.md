@@ -1,3 +1,74 @@
+# Deep Retina 3th place solution to Kaggle's 2018 Data Science Bowl. 
+
+This solution is based on Matterport's Mask_RCNN implementation on keras/tensorflow. Please look at the original repository (https://github.com/matterport/Mask_RCNN) for specific details.
+This is an implementation of [Mask R-CNN](https://arxiv.org/abs/1703.06870) on Python 3, Keras, and TensorFlow. The model generates bounding boxes and segmentation masks for each instance of an object in the image. It's based on Feature Pyramid Network (FPN) and a ResNet101 backbone. I have used the pretrained COCO weights as the starting point for my training on the nuclei segmentation dataset. 
+
+Some of the Mask-RCNN files are modified, in particular model.py and utils.py. 
+
+# Training
+
+## Data
+
+I did not use any additional external data.
+Training was done with a modified version of the dataset as in the discussion forum:  https://www.kaggle.com/c/data-science-bowl-2018/discussion/50518 and mentioned several times in the Official External Data thread as a link to:
+https://github.com/lopuhin/kaggle-dsbowl-2018-dataset-fixes
+For stage2 I didn't retrain my model with the released stage1_test images.
+File my_bowl_dataset.py generates the bowldataset class to upload the images and masks in the correct format.
+
+
+## Augmentation
+
+The modifications of files model.py and utils.py are needed for scaling the training set images before random 512x512 crops are taken for training. This scaling that take places in the "resize_image" function in utils.py and also includes aspect ratio changes of the images. In addition, code in model.py inside the "augment" section of function "load_image_gt", allows for further image augmentation of the 512x512 crops, concretely:
+* vertical and horizontal flips
+* 90 degree rotations
+* further rotation by random angles.
+* color channel shift (this function is copied from the keras Imagegenerator function).
+
+Similar augmentations can be achieved with the imgaug library (see the code for an example), but I have found these slightly underperform compared to my implementation. Also note that my winning implementation contained a bug that I have removed from this source code, so the results of running the training schedule bellow vary slightly from my final implementation. The bug was in the cropping function in utils.py and resulted in my code always taking the same part of an image (after the random rescaling that was working ok). Surprisingly, this bug did not penalize much my score, although I would have gone up one or maybe two positions if I hadn't made this stupid error.....
+
+
+
+## Training schedule
+
+
+Training takes place in three consecutive steps. 
+
+
+### Step 1
+
+For the first step we initialized the network with the COCO weights pretrained by Matterport (mentioned in the External data thread) and accessible at: https://github.com/matterport/Mask_RCNN/releases/download/v2.0/mask_rcnn_coco.h5
+File "my_train_1.py" contains the code for the first training step. This is the most important part of the training, the other two steps don't improve much. Training doesn't have anything fancy, it just trains for 75 epochs, reducing the learning rate at epoch 30 and 50. Training uses the default SGD.
+
+### Step 2 
+
+File "my_train_2.py" contains the second step. In this step we initialize the network with the final epoch weights in step 1. We then train for 40 additional epochs. The difference with step 1 is how images are taken from the training set. In step 1 images are taken one at a time as in most training procedures. But it is easy to see that the types of images and the number of each type are quite different, this makes the training dataset quite unbalanced in regards to the type of images to classify. Because the training set had groups of images of different sizes and usually the smaller images are more abundant I thought that it would be good (given all the cropping done above) that for each epoch we use several times the same image, in particular for the larger images. In summary , the train set as provided has 9 image sizes, each with different number of images:
+(256, 320, 4) 111
+(1040, 1388, 4) 1
+(360, 360, 4) 90
+(260, 347, 4) 3
+(512, 640, 4) 13
+(603, 1272, 4) 6
+(256, 256, 4) 334
+(1024, 1024, 4) 16
+(520, 696, 4) 90
+So I take 334 copies of the (1040,1388) image and add them to the training set, I take 1 copy of each image in the (256,256) category, 3 copies of each image in the (256,320) category and so on generating a training set that has the same number of images of each size. This makes my training set very large...
+
+
+### Step 3
+
+File "my_train_3.py" contains the third step. The final third step takes the weights of the last epoch in Step 2 and repeats the same procedure for a further 5 epochs with slightly larger augmentation parameters. The resulting weights are what have been used for my winning solution. It should be noted, however, that Steps 2 and 3 do not result in significant improvement of the Step 2 predictions (it is easy to say now that we can see the scores... ;) )
+
+
+# Inference
+
+Inference uses the "pad64" option of Matterport's Mask_RCNN implementation.
+
+* my_inference.py contains a basic inference for the test set. Adding a binary dilation operation as simple postprocessing. This is a simplified version that results in equally good results as the test time augmentation (tta) used in my final solution. In fact, I would recommend using this version, the tta has a lot of parameters to tweak and (again it is easy to say when you can see the stage 2 results...) in my opinion it is not really worth it.
+
+* my_inference_tta.py For each image we make 15 predictions using the same model but different test time augmentations. This takes a long time for the 3k images in the final stage2, in fact, my final solution did not use the multiproccessing that I have added later and speeds up things quite a lot. The 15 augmentations used are based on different combinations of flips 90 degree rotations, channel shift ranges and scaling of the width and length. These are specified in the aug_options list. For example an entry [True, False, 2,7,1.1,1.2] will make an upside-down flip, no left-right flip, rotate 90 degrees two times, randomly shift the channels with a value of 7 and scale the image with a width scaling of 1.1 and height scaling of 1.2.
+ Once the 15 predictions for each image are performed we merge the predictions. The function that merges the test time augmentations (TTA) is quite complex so I've tried to document what is going on as much as possible in that python file. As I said, a binary dilation operation on a single prediction (this is not part of my winning solution but I include it in the code) achieves similar results and takes much less time. Also note that this tta hyperparameters are set for my solution that includes the bug documented above. If you want to reproduce the exact result you should include the bug in the image "random" cropping.
+This code generates the csv file with the run-length encoding that were submitted as the 3th place solution.
+
 # Mask R-CNN for Object Detection and Segmentation
 
 This is an implementation of [Mask R-CNN](https://arxiv.org/abs/1703.06870) on Python 3, Keras, and TensorFlow. The model generates bounding boxes and segmentation masks for each instance of an object in the image. It's based on Feature Pyramid Network (FPN) and a ResNet101 backbone.

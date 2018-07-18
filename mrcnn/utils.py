@@ -393,7 +393,7 @@ class Dataset(object):
         return mask, class_ids
 
 
-def resize_image(image, min_dim=None, max_dim=None, min_scale=None, mode="square"):
+def resize_image(image, min_dim=None, max_dim=None, min_scale=None, mode="square", aspect_ratio= 1, zoom= False, min_enlarge = 1):
     """Resizes an image keeping the aspect ratio unchanged.
 
     min_dim: if provided, resizes the image such that it's smaller
@@ -450,10 +450,30 @@ def resize_image(image, min_dim=None, max_dim=None, min_scale=None, mode="square
         if round(image_max * scale) > max_dim:
             scale = max_dim / image_max
 
+
+    if zoom:
+        ## Zooming and aspect ratio changes
+        min_scale = min_dim/min(h,w)
+        max_scale = max(min_enlarge,min_scale * zoom) ## We enlarge images at least by min_scale*zomm or min_enlarge
+        scale = np.random.uniform(min_scale, max_scale)
+        # scale = (scale,  scale*np.random.uniform(1,aspect_ratio)) ## change aspect ratio
+
+
+        if np.random.uniform(0,1)>0.5:
+            scale = (scale,  scale*np.random.uniform(1,aspect_ratio)) ## change aspect ratio
+        else:
+            scale = (scale*np.random.uniform(1,aspect_ratio),  scale) ## change aspect ratio
+            
+    else:
+        scale = (scale,scale)
+
+
+            
     # Resize image using bilinear interpolation
-    if scale != 1:
+    if scale != (1,1):
+        ## Note that my original submission used sdimage for resizing, I have changed it to skimage to be consistent with the latest Mask_RCNN
         image = skimage.transform.resize(
-            image, (round(h * scale), round(w * scale)),
+            image, (round(h * scale[0]), round(w * scale[1])),
             order=1, mode="constant", preserve_range=True)
 
     # Need padding or cropping?
@@ -493,6 +513,7 @@ def resize_image(image, min_dim=None, max_dim=None, min_scale=None, mode="square
         h, w = image.shape[:2]
         y = random.randint(0, (h - min_dim))
         x = random.randint(0, (w - min_dim))
+        ## My bug in the final implementation resulted in y and x being always = 0 ...
         crop = (y, x, min_dim, min_dim)
         image = image[y:y + min_dim, x:x + min_dim]
         window = (0, 0, min_dim, min_dim)
@@ -514,7 +535,7 @@ def resize_mask(mask, scale, padding, crop=None):
     # calculated with round() instead of int()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        mask = scipy.ndimage.zoom(mask, zoom=[scale, scale, 1], order=0)
+        mask = scipy.ndimage.zoom(mask, zoom=[scale[0], scale[1], 1], order=0)
     if crop is not None:
         y, x, h, w = crop
         mask = mask[y:y + h, x:x + w]

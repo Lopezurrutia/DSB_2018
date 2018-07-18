@@ -24,7 +24,8 @@ import keras.layers as KL
 import keras.engine as KE
 import keras.models as KM
 
-from mrcnn import utils
+# from mrcnn import utils
+import utils
 
 # Requires TensorFlow 1.3+ and Keras 2.0.8+.
 from distutils.version import LooseVersion
@@ -1190,6 +1191,73 @@ def mrcnn_mask_loss_graph(target_masks, target_class_ids, pred_masks):
 #  Data Generator
 ############################################################
 
+#####################################################################################################
+## Functions used for the image augmentation
+#####################################################################################################
+import cv2
+
+def cropcenter(img_pre,xcrop,ycrop):
+    ysize, xsize, chan = img_pre.shape
+    xoff = (xsize - xcrop) // 2
+    yoff = (ysize - ycrop) // 2
+    # img= img_pre[yoff:-yoff,xoff:-xoff]
+    img= img_pre[yoff:(yoff+ycrop),xoff:(xoff+xcrop)]
+    return img
+
+    
+#########################################################################
+## Rotate image around a centerpoint and return transformation matrix
+#########################################################################
+def img_rot(img,msk,angle):
+    ## center: (cX,xY) tuple with rotation center
+    ## angle: Positive values mean counter-clockwise rotation (the coordinate origin is assumed to be the top-left corner).)
+    (h, w) = img.shape[:2]
+    center=(w/2,h/2)
+    # grab the rotation matrix (applying the negative of the
+    # angle to rotate clockwise), then grab the sine and cosine
+    # (i.e., the rotation components of the matrix)
+    M = cv2.getRotationMatrix2D(center, -angle, 1.0)
+    cos = np.abs(M[0, 0])
+    sin = np.abs(M[0, 1])
+
+    # compute the new bounding dimensions of the image
+    nW = int((h * sin) + (w * cos))
+    nH = int((h * cos) + (w * sin))
+
+    # adjust the rotation matrix to take into account translation
+    M[0, 2] += (nW / 2) - center[0]
+    M[1, 2] += (nH / 2) - center[1]
+
+    # perform the actual rotation and return the image
+    img=cv2.warpAffine(img, M, (nW, nH),None, cv2.INTER_NEAREST, cv2.BORDER_CONSTANT, 0)
+    msk=cv2.warpAffine(msk, M, (nW, nH),None, cv2.INTER_NEAREST, cv2.BORDER_CONSTANT, 0)
+    if len(msk.shape)==2:
+        msk = np.expand_dims(msk,2)
+
+    img=cropcenter(img,h,w)
+    msk=cropcenter(msk,h,w)
+    msk = np.clip(msk,0,1)
+
+
+    # if len(img.shape)==2:
+    #     img=np.expand_dims(img,2)
+    return img,msk
+#########################################################################
+    
+def random_channel_shift(x, intensity, channel_axis=0):
+    x = np.rollaxis(x, channel_axis, 0)
+    min_x, max_x = np.min(x), np.max(x)
+    channel_images = [np.clip(x_channel + np.random.uniform(-intensity, intensity), min_x, max_x)
+                      for x_channel in x]
+    x = np.stack(channel_images, axis=0)
+    x = np.rollaxis(x, 0, channel_axis + 1)
+    return x
+#####################################################################################################
+#####################################################################################################
+
+
+
+    
 def load_image_gt(dataset, config, image_id, augment=False, augmentation=None,
                   use_mini_mask=False):
     """Load and return ground truth data for an image (image, mask, bounding boxes).
@@ -1223,17 +1291,46 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None,
         min_dim=config.IMAGE_MIN_DIM,
         min_scale=config.IMAGE_MIN_SCALE,
         max_dim=config.IMAGE_MAX_DIM,
+        aspect_ratio = config.ASPECT_RATIO,
+        min_enlarge = config.MIN_ENLARGE,
+        zoom = config.ZOOM,
         mode=config.IMAGE_RESIZE_MODE)
     mask = utils.resize_mask(mask, scale, padding, crop)
 
     # Random horizontal flips.
     # TODO: will be removed in a future update in favor of augmentation
     if augment:
-        logging.warning("'augment' is depricated. Use 'augmentation' instead.")
+        # logging.warning("'augment' is depricated. Use 'augmentation' instead.")
         if random.randint(0, 1):
             image = np.fliplr(image)
             mask = np.fliplr(mask)
 
+        if random.randint(0, 1):
+            image = np.flipud(image)
+            mask = np.flipud(mask)
+
+        ## Random rotation
+        coin=np.random.random()
+        if coin < 0.25:
+            k=1
+        elif (coin>= 0.25 and coin<0.5):
+            k=2
+        elif (coin>= 0.5 and coin<0.75):
+            k=3
+        else:
+            k=0
+        image = np.rot90(image, k=k,axes=(0,1))
+        mask = np.rot90(mask, k=k,axes=(0,1))
+
+        if (config.ROT_RANGE):
+            if np.random.uniform(0,1)>0.5:
+                image,mask= img_rot(image,mask,angle=np.random.uniform(-config.ROT_RANGE,config.ROT_RANGE))
+
+        if config.CHANNEL_SHIFT_RANGE:
+            image = random_channel_shift(image,config.CHANNEL_SHIFT_RANGE,2)
+
+
+            
     # Augmentation
     # This requires the imgaug lib (https://github.com/aleju/imgaug)
     if augmentation:
@@ -2266,7 +2363,7 @@ class MaskRCNN():
             "*epoch*", "{epoch:04d}")
 
     def train(self, train_dataset, val_dataset, learning_rate, epochs, layers,
-              augmentation=None):
+              augmentation=None,augment=False):
         """Train the model.
         train_dataset, val_dataset: Training and validation Dataset objects.
         learning_rate: The learning rate to train with
@@ -2312,7 +2409,7 @@ class MaskRCNN():
 
         # Data generators
         train_generator = data_generator(train_dataset, self.config, shuffle=True,
-                                         augmentation=augmentation,
+                                         augmentation=augmentation,augment=augment,
                                          batch_size=self.config.BATCH_SIZE)
         val_generator = data_generator(val_dataset, self.config, shuffle=True,
                                        batch_size=self.config.BATCH_SIZE)
@@ -2320,9 +2417,9 @@ class MaskRCNN():
         # Callbacks
         callbacks = [
             keras.callbacks.TensorBoard(log_dir=self.log_dir,
-                                        histogram_freq=0, write_graph=True, write_images=False),
-            keras.callbacks.ModelCheckpoint(self.checkpoint_path,
-                                            verbose=0, save_weights_only=True),
+                                        histogram_freq=0, write_graph=True, write_images=False)#,
+            # keras.callbacks.ModelCheckpoint(self.checkpoint_path,
+            #                                 verbose=0, save_weights_only=True),
         ]
 
         # Train
@@ -2719,7 +2816,7 @@ def compose_image_meta(image_id, original_image_shape, image_shape,
         list(original_image_shape) +  # size=3
         list(image_shape) +           # size=3
         list(window) +                # size=4 (y1, x1, y2, x2) in image cooredinates
-        [scale] +                     # size=1
+        [scale[0]] +                     # size=1 NO LONGER, I dont have time to correct this properly so take only the first element
         list(active_class_ids)        # size=num_classes
     )
     return meta
