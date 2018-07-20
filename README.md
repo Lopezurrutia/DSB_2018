@@ -56,7 +56,7 @@ So I take 334 copies of the (1040,1388) image and add them to the training set, 
 
 ### Step 3
 
-File "my_train_3.py" contains the third step. The final third step takes the weights of the last epoch in Step 2 and repeats the same procedure for a further 5 epochs with slightly larger augmentation parameters. The resulting weights are what have been used for my winning solution. It should be noted, however, that Steps 2 and 3 do not result in significant improvement of the Step 2 predictions (it is easy to say now that we can see the scores... ;) )
+File "my_train_3.py" contains the third step. The final third step takes the weights of the last epoch in Step 2 and repeats the same procedure for a further 5 epochs with slightly larger augmentation parameters. The resulting weights are what have been used for my winning solution. It should be noted, however, that Steps 2 and 3 do not result in significant improvement of the Step 2 predictions (it is easy to say now that we can see the scores... ;) ). The weights for my solution are too large for github, you can download them at : https://drive.google.com/file/d/19kVton20JL9u0CpwGssD7EbBvsWcq1ty/view?usp=sharing
 
 
 # Inference
